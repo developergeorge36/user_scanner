@@ -71,7 +71,7 @@
 
 <script>
 // ======= EDIT THIS: paste your deployed Apps Script Web App URL here =======
-const WEB_APP_URL = "https://script.google.com/macros/s/AKfycby5YA4kC822A_NuzYEJZPEWcl5t7Snk4RMPZMThDBT6wzfrxNa_GU61lttem8kGzATG/exec";
+const WEB_APP_URL = "PASTE_YOUR_WEB_APP_URL_HERE";
 // =============================================================================
 
 const resultDiv = document.getElementById("result");
@@ -86,14 +86,30 @@ function onScanSuccess(decodedText) {
   lookupAttendee(decodedText);
 }
 
-async function lookupAttendee(attendeeId) {
+function lookupAttendee(attendeeId) {
   resultDiv.style.display = "block";
   resultDiv.className = "";
   resultDiv.innerHTML = "<p>Looking up " + attendeeId + "...</p>";
 
-  try {
-    const response = await fetch(WEB_APP_URL + "?id=" + encodeURIComponent(attendeeId));
-    const data = await response.json();
+  // JSONP: Apps Script Web Apps don't reliably send CORS headers for fetch(),
+  // so we use a <script> tag instead — that bypasses CORS entirely.
+  const callbackName = "jsonpCallback_" + Date.now();
+  let timedOut = false;
+
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    resultDiv.className = "status-error";
+    resultDiv.innerHTML = "<h2>Connection Error</h2><p>Could not reach the check-in system. Check your internet connection.</p>";
+    rescanBtn.style.display = "inline-block";
+    delete window[callbackName];
+    script.remove();
+  }, 10000);
+
+  window[callbackName] = function (data) {
+    if (timedOut) return;
+    clearTimeout(timeoutId);
+    delete window[callbackName];
+    script.remove();
 
     if (!data.found) {
       resultDiv.className = "status-error";
@@ -114,12 +130,20 @@ async function lookupAttendee(attendeeId) {
         "<p>" + data.email + "</p>" +
         "<p>" + data.whatsapp + "</p>";
     }
-  } catch (err) {
+    rescanBtn.style.display = "inline-block";
+  };
+
+  const script = document.createElement("script");
+  script.src = WEB_APP_URL + "?id=" + encodeURIComponent(attendeeId) + "&callback=" + callbackName;
+  script.onerror = () => {
+    if (timedOut) return;
+    clearTimeout(timeoutId);
     resultDiv.className = "status-error";
     resultDiv.innerHTML = "<h2>Connection Error</h2><p>Could not reach the check-in system. Check your internet connection.</p>";
-  }
-
-  rescanBtn.style.display = "inline-block";
+    rescanBtn.style.display = "inline-block";
+    delete window[callbackName];
+  };
+  document.body.appendChild(script);
 }
 
 function resumeScanning() {
