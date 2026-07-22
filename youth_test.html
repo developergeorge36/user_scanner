@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<!--
+  EVENT CHECK-IN SYSTEM — STEP 3: Usher Scanner Page
+  ------------------------------------------------------
+  What this is: a phone-friendly web page the usher opens. It turns on
+  the camera, scans a guest's QR code, and shows their name/email/WhatsApp
+  plus whether they're already checked in.
+
+  SETUP:
+  1. Open this file in a text editor and replace WEB_APP_URL below with
+     the "Web app URL" you got from deploying event-checkin-scanner-backend.gs
+     (Deploy > New deployment > Web app).
+  2. Upload this HTML file somewhere it can be opened as a webpage — the
+     easiest free option is GitHub Pages, or Google Sites, or even just
+     opening the local file directly in a phone browser (camera access
+     works from a local file too, but GitHub Pages is more reliable for
+     multiple usher devices).
+  3. On event day, the usher opens the page URL on their phone, grants
+     camera permission, and points it at each guest's QR code.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Event Check-In Scanner</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  body {
+    font-family: -apple-system, Roboto, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background: #111;
+    color: #fff;
+    text-align: center;
+  }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  #reader { width: 100%; max-width: 400px; margin: 16px auto; border-radius: 12px; overflow: hidden; }
+  #result {
+    max-width: 400px;
+    margin: 16px auto;
+    padding: 20px;
+    border-radius: 12px;
+    font-size: 16px;
+    text-align: left;
+    display: none;
+  }
+  .status-new { background: #1b4332; border: 2px solid #40916c; }
+  .status-duplicate { background: #4a1c1c; border: 2px solid #c0392b; }
+  .status-error { background: #4a3c1c; border: 2px solid #c09b2b; }
+  #result h2 { margin-top: 0; }
+  #result p { margin: 6px 0; }
+  #rescan-btn {
+    margin-top: 12px;
+    padding: 10px 20px;
+    font-size: 15px;
+    border-radius: 8px;
+    border: none;
+    background: #444;
+    color: #fff;
+  }
+</style>
+</head>
+<body>
+
+<h1>Usher Check-In Scanner</h1>
+<p style="opacity:0.7; font-size:14px;">Point camera at guest's QR code</p>
+
+<div id="reader"></div>
+<div id="result"></div>
+<button id="rescan-btn" style="display:none;" onclick="resumeScanning()">Scan Next Guest</button>
+
+<script>
+// ======= EDIT THIS: paste your deployed Apps Script Web App URL here =======
+const WEB_APP_URL = "https://script.google.com/macros/s/AKfycby5YA4kC822A_NuzYEJZPEWcl5t7Snk4RMPZMThDBT6wzfrxNa_GU61lttem8kGzATG/exec";
+// =============================================================================
+
+const resultDiv = document.getElementById("result");
+const rescanBtn = document.getElementById("rescan-btn");
+let scanner;
+let isProcessing = false;
+
+function onScanSuccess(decodedText) {
+  if (isProcessing) return;
+  isProcessing = true;
+  scanner.pause();
+  lookupAttendee(decodedText);
+}
+
+async function lookupAttendee(attendeeId) {
+  resultDiv.style.display = "block";
+  resultDiv.className = "";
+  resultDiv.innerHTML = "<p>Looking up " + attendeeId + "...</p>";
+
+  try {
+    const response = await fetch(WEB_APP_URL + "?id=" + encodeURIComponent(attendeeId));
+    const data = await response.json();
+
+    if (!data.found) {
+      resultDiv.className = "status-error";
+      resultDiv.innerHTML = "<h2>Not Found</h2><p>ID: " + attendeeId + "</p><p>This QR code doesn't match any registered attendee.</p>";
+    } else if (data.alreadyCheckedIn) {
+      resultDiv.className = "status-duplicate";
+      resultDiv.innerHTML =
+        "<h2>Already Checked In</h2>" +
+        "<p><b>" + data.name + "</b></p>" +
+        "<p>" + data.email + "</p>" +
+        "<p>" + data.whatsapp + "</p>" +
+        "<p style='opacity:0.8;'>This guest was already scanned earlier.</p>";
+    } else {
+      resultDiv.className = "status-new";
+      resultDiv.innerHTML =
+        "<h2>Checked In &#10003;</h2>" +
+        "<p><b>" + data.name + "</b></p>" +
+        "<p>" + data.email + "</p>" +
+        "<p>" + data.whatsapp + "</p>";
+    }
+  } catch (err) {
+    resultDiv.className = "status-error";
+    resultDiv.innerHTML = "<h2>Connection Error</h2><p>Could not reach the check-in system. Check your internet connection.</p>";
+  }
+
+  rescanBtn.style.display = "inline-block";
+}
+
+function resumeScanning() {
+  resultDiv.style.display = "none";
+  rescanBtn.style.display = "none";
+  isProcessing = false;
+  scanner.resume();
+}
+
+function onScanFailure() {
+  // Fires continuously while no QR is in view — ignore silently.
+}
+
+window.onload = () => {
+  scanner = new Html5Qrcode("reader");
+  scanner.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: 250 },
+    onScanSuccess,
+    onScanFailure
+  );
+};
+</script>
+
+</body>
+</html>
