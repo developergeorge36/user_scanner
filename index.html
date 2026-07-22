@@ -1,22 +1,18 @@
 <!DOCTYPE html>
 <!--
-  EVENT CHECK-IN SYSTEM — STEP 3: Usher Scanner Page
+  EVENT CHECK-IN SYSTEM — FINAL: Usher Scanner Page (GitHub-hosted)
   ------------------------------------------------------
-  What this is: a phone-friendly web page the usher opens. It turns on
-  the camera, scans a guest's QR code, and shows their name/email/WhatsApp
-  plus whether they're already checked in.
+  Uses plain fetch(). This works now because the deployment's "Who has
+  access" is set to "Anyone" — that was the actual root cause of every
+  earlier CORS/CORB/sign-in error, not CORS itself.
 
   SETUP:
-  1. Open this file in a text editor and replace WEB_APP_URL below with
-     the "Web app URL" you got from deploying event-checkin-scanner-backend.gs
-     (Deploy > New deployment > Web app).
-  2. Upload this HTML file somewhere it can be opened as a webpage — the
-     easiest free option is GitHub Pages, or Google Sites, or even just
-     opening the local file directly in a phone browser (camera access
-     works from a local file too, but GitHub Pages is more reliable for
-     multiple usher devices).
-  3. On event day, the usher opens the page URL on their phone, grants
-     camera permission, and points it at each guest's QR code.
+  1. Replace WEB_APP_URL below with your deployed Web App URL (the same
+     one ending in /exec).
+  2. Upload this file to your GitHub Pages repo (can replace the old
+     usher-scanner.html or index.html there).
+  3. Open the hosted link on the usher's phone — camera + manual entry
+     backup both work here (unlike Apps Script's own page hosting).
 -->
 <html lang="en">
 <head>
@@ -35,6 +31,11 @@
   }
   h1 { font-size: 20px; margin-bottom: 4px; }
   #reader { width: 100%; max-width: 400px; margin: 16px auto; border-radius: 12px; overflow: hidden; }
+  #manual-entry { max-width: 400px; margin: 12px auto; display: flex; gap: 8px; }
+  #manual-entry input { flex: 1; padding: 10px; border-radius: 8px; border: none; font-size: 15px; }
+  #manual-entry button, #rescan-btn {
+    padding: 10px 16px; border-radius: 8px; border: none; background: #444; color: #fff; font-size: 15px;
+  }
   #result {
     max-width: 400px;
     margin: 16px auto;
@@ -49,23 +50,20 @@
   .status-error { background: #4a3c1c; border: 2px solid #c09b2b; }
   #result h2 { margin-top: 0; }
   #result p { margin: 6px 0; }
-  #rescan-btn {
-    margin-top: 12px;
-    padding: 10px 20px;
-    font-size: 15px;
-    border-radius: 8px;
-    border: none;
-    background: #444;
-    color: #fff;
-  }
 </style>
 </head>
 <body>
 
 <h1>Usher Check-In Scanner</h1>
-<p style="opacity:0.7; font-size:14px;">Point camera at guest's QR code</p>
+<p style="opacity:0.7; font-size:14px;">Point camera at guest's QR code, or type their ID below</p>
 
 <div id="reader"></div>
+
+<div id="manual-entry">
+  <input id="manual-id" type="text" placeholder="e.g. EVT-0001" />
+  <button onclick="submitManualId()">Check</button>
+</div>
+
 <div id="result"></div>
 <button id="rescan-btn" style="display:none;" onclick="resumeScanning()">Scan Next Guest</button>
 
@@ -82,34 +80,26 @@ let isProcessing = false;
 function onScanSuccess(decodedText) {
   if (isProcessing) return;
   isProcessing = true;
-  scanner.pause();
+  if (scanner) scanner.pause();
   lookupAttendee(decodedText);
 }
 
-function lookupAttendee(attendeeId) {
+function submitManualId() {
+  const id = document.getElementById("manual-id").value.trim();
+  if (!id || isProcessing) return;
+  isProcessing = true;
+  if (scanner) scanner.pause();
+  lookupAttendee(id);
+}
+
+async function lookupAttendee(attendeeId) {
   resultDiv.style.display = "block";
   resultDiv.className = "";
   resultDiv.innerHTML = "<p>Looking up " + attendeeId + "...</p>";
 
-  // JSONP: Apps Script Web Apps don't reliably send CORS headers for fetch(),
-  // so we use a <script> tag instead — that bypasses CORS entirely.
-  const callbackName = "jsonpCallback_" + Date.now();
-  let timedOut = false;
-
-  const timeoutId = setTimeout(() => {
-    timedOut = true;
-    resultDiv.className = "status-error";
-    resultDiv.innerHTML = "<h2>Connection Error</h2><p>Could not reach the check-in system. Check your internet connection.</p>";
-    rescanBtn.style.display = "inline-block";
-    delete window[callbackName];
-    script.remove();
-  }, 10000);
-
-  window[callbackName] = function (data) {
-    if (timedOut) return;
-    clearTimeout(timeoutId);
-    delete window[callbackName];
-    script.remove();
+  try {
+    const response = await fetch(WEB_APP_URL + "?id=" + encodeURIComponent(attendeeId));
+    const data = await response.json();
 
     if (!data.found) {
       resultDiv.className = "status-error";
@@ -130,27 +120,20 @@ function lookupAttendee(attendeeId) {
         "<p>" + data.email + "</p>" +
         "<p>" + data.whatsapp + "</p>";
     }
-    rescanBtn.style.display = "inline-block";
-  };
-
-  const script = document.createElement("script");
-  script.src = WEB_APP_URL + "?id=" + encodeURIComponent(attendeeId) + "&callback=" + callbackName;
-  script.onerror = () => {
-    if (timedOut) return;
-    clearTimeout(timeoutId);
+  } catch (err) {
     resultDiv.className = "status-error";
     resultDiv.innerHTML = "<h2>Connection Error</h2><p>Could not reach the check-in system. Check your internet connection.</p>";
-    rescanBtn.style.display = "inline-block";
-    delete window[callbackName];
-  };
-  document.body.appendChild(script);
+  }
+
+  rescanBtn.style.display = "inline-block";
 }
 
 function resumeScanning() {
   resultDiv.style.display = "none";
   rescanBtn.style.display = "none";
+  document.getElementById("manual-id").value = "";
   isProcessing = false;
-  scanner.resume();
+  if (scanner) scanner.resume();
 }
 
 function onScanFailure() {
@@ -164,7 +147,10 @@ window.onload = () => {
     { fps: 10, qrbox: 250 },
     onScanSuccess,
     onScanFailure
-  );
+  ).catch(function () {
+    document.getElementById("reader").innerHTML =
+      "<p style='padding:20px; opacity:0.8;'>Camera unavailable. Use manual ID entry below.</p>";
+  });
 };
 </script>
 
